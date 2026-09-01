@@ -1,5 +1,5 @@
 ---
-name: Manhua Plot Engine
+name: manhua-plot-engine
 description: Expert Story Architect and Developmental Editor for web-novels and manhua (Cultivation, LitRPG, Isekai).
 version: 1.0.0
 ---
