@@ -1,46 +1,129 @@
-# Manhua Plot Engine
+# Manhua Plot Engine (MCP Server)
 
-A specialized AI narrative framework designed to transform fragmented ideas into structured, high-impact web-novels and manhua-style stories. This engine is specifically tuned for genres such as **Cultivation, LitRPG, System, and Isekai**.
+[![Deploy MCP Server on Demand](https://github.com/cosmicvi/manhua-plot-engine/actions/workflows/deploy_mcp.yml/badge.svg)](https://github.com/cosmicvi/manhua-plot-engine/actions/workflows/deploy_mcp.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![MCP](https://img.shields.io/badge/MCP-2.x-green.svg)](https://modelcontextprotocol.io/)
 
-## 📖 Overview
+A specialized **Model Context Protocol (MCP)** server and narrative architecture engine designed for web-novels, progression fantasy, and manhua-style narratives (**Cultivation, LitRPG, System, and Isekai**).
 
-The Manhua Plot Engine is a comprehensive system prompt that converts a Large Language Model (LLM) into a **Story Architect, Developmental Editor, and Co-Writer**. Unlike standard AI writing, this engine prioritizes world-logic, strict power scaling, and the cinematic pacing required for manhua adaptations.
+It provides AI models (Claude, Gemini, GPT-4, Cursor, Antigravity) with structured tool calling, world-bible continuity checks, strict power-scaling audits, and cinematic scene drafting capabilities.
 
-## 🚀 How to Use
+---
 
-1. **Copy the Prompt:** Open the `novel-architect.md` (or `system-prompt.md`) file in this repository and copy the entire text.
-2. **Initialize the AI:** Paste the text into your preferred AI chat interface (e.g., Gemma, GPT-4, Claude).
-3. **Start Architecting:** Once the AI confirms it has adopted the persona, use the **Execution Commands** listed below to begin working on your story.
+## ⚡ Quick Start
 
-## 🛠 Key Capabilities
+### 1. Host On-Demand via GitHub Actions (Zero Setup / Remote)
 
-### The Architect Mode
-Turns raw scribbles and fragmented notes into a tiered narrative hierarchy:
-* **Macro-Plot:** The overarching series goal.
-* **Arc-Plot:** Current objectives and climaxes.
-* **Chapter Beats:** Precise sequences of events.
+You can launch a live, publicly accessible MCP server directly on GitHub Actions without installing anything locally:
 
-### The Chronicler Mode
-Maintains a "World Bible" to prevent plot holes and power creep:
-* **Power Scaling:** Tracks ranks, tiers, and abilities.
-* **Character State:** Monitors social standing and relationship dynamics.
-* **Lore Guardrails:** Flags any actions that violate established world rules.
+1. Navigate to **Actions** $\rightarrow$ **Deploy MCP Server on Demand** in your repository.
+2. Click **Run workflow** (select `transport: sse` and `tunnel: cloudflare`).
+3. Once running, view the workflow summary for your live public URL:
+   ```text
+   📡 SSE Endpoint: https://xxxx.trycloudflare.com/sse
+   ```
+4. Add the endpoint to your MCP client:
+   ```json
+   {
+     "mcpServers": {
+       "manhua-plot-engine": {
+         "url": "https://xxxx.trycloudflare.com/sse"
+       }
+     }
+   }
+   ```
 
-### Analytical Co-Writing
-Produces high-visual, cinematic prose while mirroring the author's unique voice, avoiding common "AI-isms" and clichés.
+---
 
-## ⌨️ Execution Commands
+### 2. Run Locally via STDIO (Claude Desktop / Cursor / Antigravity)
 
-Use these commands within the chat to trigger specific engine functions:
+1. Clone and install dependencies:
+   ```bash
+   git clone https://github.com/cosmicvi/manhua-plot-engine.git
+   cd manhua-plot-engine
+   python -m venv .venv
+   .\.venv\Scripts\activate   # Windows (or: source .venv/bin/activate on Unix)
+   pip install -r requirements.txt
+   ```
 
-| Command | Action | Result |
+2. Add to your local MCP client configuration:
+   ```json
+   {
+     "mcpServers": {
+       "manhua-plot-engine": {
+         "command": "python",
+         "args": [
+           "path/to/manhua-plot-engine/mcp_server.py",
+           "--transport",
+           "stdio"
+         ]
+       }
+     }
+   }
+   ```
+
+---
+
+### 3. Run Locally as an SSE / HTTP Network Service
+
+```bash
+# Start Server-Sent Events (SSE) server on port 8080
+python mcp_server.py --transport sse --host 0.0.0.0 --port 8080
+
+# Or Streamable HTTP transport
+python mcp_server.py --transport streamable-http --host 0.0.0.0 --port 8080
+```
+
+---
+
+## 🛠️ MCP Tools & Capabilities
+
+The server exposes 7 specialized tools designed around the core operational guidelines in [`skills/manhua-plot-engine/SKILL.md`](skills/manhua-plot-engine/SKILL.md):
+
+| Tool | Mode | Description |
 | :--- | :--- | :--- |
-| `/synthesize [text]` | **Scribble $\rightarrow$ Structure** | Converts raw notes into a structured Outline. |
-| `/architect [beat]` | **Outline $\rightarrow$ Scene** | Expands a plot point into a detailed scene breakdown. |
-| `/track-state [text]` | **Continuity Check** | Updates and summarizes power levels and relationships. |
-| `/review [text]` | **Critique** | Analyzes pacing, logic, and genre effectiveness. |
-| `/improvise [text]` | **Drafting** | Generates visual, high-impact prose based on a goal. |
-| `/critique-dialogue` | **Dialogue Audit** | Analyzes spoken lines for subtext and realism. |
+| `synthesize_outline` | **The Architect** | Converts fragmented notes into a 3-tier hierarchy (Macro-Plot, Arc-Plot, Chapter Beats) with escalation hooks. |
+| `architect_scene` | **The Architect** | Expands a single plot beat into a 5-stage scene breakdown (Opening Hook, Tension Rise, The Turn, Climax, Cliffhanger). |
+| `track_continuity_state` | **The Chronicler** | Audits text against realm ranks, faction statuses, debts/grudges, and flags lore inconsistencies. |
+| `audit_power_scaling` | **The Chronicler** | Validates character feats against realm ceilings to prevent unearned power creep and broken battle logic. |
+| `review_chapter` | **Developmental Review** | Multi-pass critique checking "The Turn", manhua pacing, show-vs-tell, AI cliché detection, and 3 actionable fixes. |
+| `critique_dialogue` | **Dialogue Audit** | Audits spoken dialogue for subtext, swagger, character distinctness, and eliminates clunky exposition. |
+| `improvise_scene` | **Analytical Co-Writing**| Provides cinematic framing and scene drafting directives matching the author's voice without generic AI tropes. |
+
+---
+
+## 📚 MCP Resources & Prompts
+
+### Resources
+- `resource://manhua-plot-engine/rules`: Full operational guidelines, rules of engagement, and anti-cliché directives.
+- `resource://manhua-plot-engine/world-bible-template`: Standardized Markdown template for cultivation realms, economic scale, sects, and grudges.
+- `resource://manhua-plot-engine/tropes-guide`: Best practices for executing high-engagement tropes (Hidden Master, Face-Slapping, Auction Arcs, Tribulations).
+
+### Prompts
+- `synthesize`: Outline generation prompt.
+- `architect`: Granular scene expansion prompt.
+- `review`: Comprehensive developmental critique prompt.
+
+---
+
+## 📂 Repository Structure
+
+```text
+├── .github/
+│   └── workflows/
+│       └── deploy_mcp.yml     # On-demand GitHub Actions deployment with Cloudflare tunnel
+├── skills/
+│   └── manhua-plot-engine/
+│       └── SKILL.md           # Core rules, role definitions, and system guidelines
+├── mcp_server.py              # Main MCP Server implementation (FastMCP / MCPServer)
+├── requirements.txt           # Python dependencies (mcp, starlette, uvicorn, etc.)
+├── LICENSE                    # MIT License
+└── README.md                  # Documentation and quickstart guide
+```
+
+---
 
 ## 📜 License
-This project is licensed under the MIT License - see the `LICENSE` file for details.
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

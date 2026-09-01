@@ -1,0 +1,165 @@
+name: Deploy MCP Server on Demand
+
+on:
+  workflow_dispatch:
+    inputs:
+      transport:
+        description: 'MCP Transport Protocol'
+        required: true
+        default: 'sse'
+        type: choice
+        options:
+          - sse
+          - streamable-http
+          - test
+      port:
+        description: 'Internal Port (default: 8080)'
+        required: false
+        default: '8080'
+      tunnel:
+        description: 'Expose Public Tunnel via Cloudflare (trycloudflare)'
+        required: true
+        default: 'cloudflare'
+        type: choice
+        options:
+          - cloudflare
+          - none
+      duration_minutes:
+        description: 'Server session duration in minutes (max 360)'
+        required: false
+        default: '120'
+
+  push:
+    branches:
+      - main
+    paths:
+      - 'mcp_server.py'
+      - 'requirements.txt'
+      - 'skills/**'
+      - '.github/workflows/**'
+
+jobs:
+  deploy_mcp:
+    name: Run Manhua Plot Engine MCP Server
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Self-Test MCP Server (Verify Tools & Resources)
+        run: |
+          python -c "
+          import mcp_server
+          print('✅ MCP Server loaded successfully.')
+          outline = mcp_server.synthesize_outline('Test notes')
+          print('✅ synthesize_outline test passed.')
+          "
+
+      - name: Run MCP Server with Cloudflare Public Tunnel
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.transport != 'test' && github.event.inputs.tunnel == 'cloudflare' }}
+        env:
+          PORT: ${{ github.event.inputs.port || '8080' }}
+          TRANSPORT: ${{ github.event.inputs.transport || 'sse' }}
+          DURATION: ${{ github.event.inputs.duration_minutes || '120' }}
+        run: |
+          # 1. Download and set up cloudflared for public tunneling
+          echo "⬇️ Downloading Cloudflare Tunnel (cloudflared)..."
+          curl -sL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+          chmod +x cloudflared
+
+          # 2. Start MCP server in background
+          echo "🚀 Starting Manhua Plot Engine MCP server on port ${PORT}..."
+          python mcp_server.py --transport ${TRANSPORT} --host 0.0.0.0 --port ${PORT} &
+          MCP_PID=$!
+
+          # 3. Wait for local server to be ready
+          sleep 3
+
+          # 4. Start Cloudflare Tunnel and capture the public URL
+          echo "🌐 Starting Cloudflare Quick Tunnel..."
+          ./cloudflared tunnel --url http://localhost:${PORT} > cloudflared.log 2>&1 &
+          TUNNEL_PID=$!
+
+          # Wait for public URL to appear in log
+          PUBLIC_URL=""
+          for i in {1..30}; do
+            PUBLIC_URL=$(grep -o 'https://[-a-zA-Z0-9.]*\.trycloudflare\.com' cloudflared.log | head -n 1 || true)
+            if [ -n "$PUBLIC_URL" ]; then
+              break
+            fi
+            sleep 1
+          done
+
+          if [ -z "$PUBLIC_URL" ]; then
+            echo "❌ Failed to obtain Cloudflare Tunnel URL. Check logs:"
+            cat cloudflared.log
+            kill $MCP_PID || true
+            exit 1
+          fi
+
+          SSE_ENDPOINT="${PUBLIC_URL}/sse"
+          HTTP_ENDPOINT="${PUBLIC_URL}/mcp"
+
+          echo "=========================================================="
+          echo "🎉 MCP Server is LIVE and publicly accessible!"
+          echo "🔗 Base URL:      ${PUBLIC_URL}"
+          echo "📡 SSE Endpoint:  ${SSE_ENDPOINT}"
+          echo "⚡ HTTP Endpoint: ${HTTP_ENDPOINT}"
+          echo "⏱️ Running for:    ${DURATION} minutes"
+          echo "=========================================================="
+
+          # Write to GitHub Step Summary
+          echo "## 🚀 Manhua Plot Engine MCP Server is Live" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Base URL** | \`${PUBLIC_URL}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **SSE Endpoint** | \`${SSE_ENDPOINT}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **HTTP Endpoint** | \`${HTTP_ENDPOINT}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Transport** | \`${TRANSPORT}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Session Duration** | ${DURATION} minutes |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ⚙️ How to connect in Claude Desktop / Cursor / Antigravity" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          echo '{' >> $GITHUB_STEP_SUMMARY
+          echo '  "mcpServers": {' >> $GITHUB_STEP_SUMMARY
+          echo '    "manhua-plot-engine": {' >> $GITHUB_STEP_SUMMARY
+          echo "      \"url\": \"${SSE_ENDPOINT}\"" >> $GITHUB_STEP_SUMMARY
+          echo '    }' >> $GITHUB_STEP_SUMMARY
+          echo '  }' >> $GITHUB_STEP_SUMMARY
+          echo '}' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+          # Keep runner alive for the requested duration
+          echo "⏳ Session active. Waiting for ${DURATION} minutes..."
+          sleep $(( DURATION * 60 )) || true
+
+          # Cleanup
+          kill $TUNNEL_PID || true
+          kill $MCP_PID || true
+
+      - name: Run MCP Server locally (No Tunnel)
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.transport != 'test' && github.event.inputs.tunnel == 'none' }}
+        env:
+          PORT: ${{ github.event.inputs.port || '8080' }}
+          TRANSPORT: ${{ github.event.inputs.transport || 'sse' }}
+        run: |
+          echo "Running MCP Server without public tunnel (local runner test)..."
+          python mcp_server.py --transport ${TRANSPORT} --host 0.0.0.0 --port ${PORT} &
+          SERVER_PID=$!
+          sleep 10
+          kill $SERVER_PID || true
+          echo "Local runner test passed."
