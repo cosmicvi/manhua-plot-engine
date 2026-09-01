@@ -21,6 +21,17 @@ except ImportError:
             "The 'mcp' package is required. Install it with: pip install mcp"
         )
 
+from mcp.server.sse import SseServerTransport
+from mcp.server.streamable_http_manager import (
+    StreamableHTTPSessionManager,
+    StreamableHTTPASGIApp,
+)
+from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
+from starlette.responses import JSONResponse, Response
+import uvicorn
+
 # Initialize MCP Server
 mcp = MCPServer("manhua-plot-engine")
 
@@ -445,6 +456,97 @@ Evaluate:
 
 
 # ==========================================
+# 🌐 UNIFIED ASGI APPLICATION (SSE + HTTP)
+# ==========================================
+
+def create_unified_app(server: MCPServer) -> Starlette:
+    """Create a unified ASGI application that supports both SSE and Streamable HTTP transports.
+
+    Gracefully routes GET/POST requests so clients connecting via either /sse or /mcp
+    or root / are handled seamlessly without 405 or 404 errors.
+    """
+    sse_transport = SseServerTransport("/messages/")
+    session_manager = StreamableHTTPSessionManager(
+        app=server._lowlevel_server,
+        json_response=False,
+        stateless=False,
+    )
+    streamable_http = StreamableHTTPASGIApp(session_manager)
+
+    class UnifiedDispatcher:
+        async def __call__(self, scope, receive, send):
+            if scope["type"] == "http":
+                raw_path = scope.get("path", "")
+                path = raw_path.rstrip("/") or "/"
+                method = scope.get("method", "GET")
+
+                # Root / Health check
+                if path in ("", "/", "/health") and method == "GET":
+                    res = JSONResponse({
+                        "server": "Manhua Plot Engine MCP Server",
+                        "status": "online",
+                        "protocol": "Model Context Protocol (MCP)",
+                        "transports_supported": ["sse", "streamable-http", "stdio"],
+                        "endpoints": {
+                            "sse_stream": "/sse (GET)",
+                            "sse_messages": "/messages/ (POST)",
+                            "streamable_http": "/mcp (POST/GET)",
+                        },
+                    })
+                    await res(scope, receive, send)
+                    return
+
+                # SSE endpoint
+                if path == "/sse":
+                    if method in ("GET", "HEAD"):
+                        async with sse_transport.connect_sse(scope, receive, send) as streams:
+                            await server._lowlevel_server.run(
+                                streams[0],
+                                streams[1],
+                                server._lowlevel_server.create_initialization_options(),
+                            )
+                        return
+                    elif method == "POST":
+                        # If a client sends JSON-RPC directly to /sse as a POST request,
+                        # delegate to Streamable HTTP instead of returning 405 Method Not Allowed!
+                        await streamable_http(scope, receive, send)
+                        return
+
+                # Streamable HTTP endpoint (/mcp)
+                if path == "/mcp":
+                    await streamable_http(scope, receive, send)
+                    return
+
+                # SSE Messages endpoint (/messages/...)
+                if path.startswith("/messages"):
+                    await sse_transport.handle_post_message(scope, receive, send)
+                    return
+
+                # Fallback: If client posts JSON-RPC to any other path, handle it via streamable HTTP
+                if method == "POST":
+                    await streamable_http(scope, receive, send)
+                    return
+
+            res = Response(status_code=404)
+            await res(scope, receive, send)
+
+    app = Starlette(
+        lifespan=lambda app: session_manager.run(),
+        middleware=[
+            Middleware(
+                CORSMiddleware,
+                allow_origins=["*"],
+                allow_credentials=True,
+                allow_methods=["*"],
+                allow_headers=["*"],
+            )
+        ],
+    )
+    app.mount("/", app=UnifiedDispatcher())
+    return app
+
+
+# ==========================================
 # 🚀 SERVER RUNNER & CLI
 # ==========================================
 
@@ -454,9 +556,9 @@ def main():
     )
     parser.add_argument(
         "--transport",
-        choices=["stdio", "sse", "streamable-http"],
+        choices=["stdio", "sse", "streamable-http", "http"],
         default=os.environ.get("MCP_TRANSPORT", "stdio"),
-        help="Transport protocol: 'stdio' for CLI/Claude/Cursor, 'sse' or 'streamable-http' for network services.",
+        help="Transport protocol: 'stdio' for CLI/Claude/Cursor, 'sse'/'http' for network services.",
     )
     parser.add_argument(
         "--host",
@@ -479,12 +581,10 @@ def main():
 
     if args.transport == "stdio":
         mcp.run(transport="stdio")
-    elif args.transport == "sse":
-        mcp.run(transport="sse", host=args.host, port=args.port)
-    elif args.transport == "streamable-http":
-        mcp.run(transport="streamable-http", host=args.host, port=args.port)
     else:
-        mcp.run()
+        # Run unified ASGI server supporting both SSE (/sse) and Streamable HTTP (/mcp)
+        app = create_unified_app(mcp)
+        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 
 if __name__ == "__main__":
